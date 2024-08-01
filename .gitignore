@@ -488,4 +488,28 @@ healthchecksdb
 # Backup folder for Package Reference Convert tool in Visual Studio 2017
 MigrationBackup/
 
+#
+[Bb]uild/
+*.swp
+CMakeCache.txt
+CMakeFiles/
+Debug/
+Release/
+*.vcxproj
+*.vcxproj.filters
+*.dir/
+*.sln
+install/
+install_manifest.txt
+generated/*
+!generated/*.in
+cmake_install.cmake
+.cache/
+.vscode/
+.idea/
+Makefile
+install*/
+cmake-build-*/
+
+
 # End of https://www.gitignore.io/api/vim,cmake,clion,visualstudio,visualstudiocode
