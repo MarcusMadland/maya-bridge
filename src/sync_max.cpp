@@ -440,7 +440,7 @@ EXPORT MStatus initializePlugin(MObject obj)
 
 	// Initialize the shared memory
 	s_buffer = new bx::SharedBuffer();
-	if (!s_buffer->init("MayaToMax", sizeof(SharedData)))
+	if (!s_buffer->init("maya-bridge", sizeof(SharedData)))
 	{
 		MGlobal::displayError("Failed to sync shared memory");
 		return status;
