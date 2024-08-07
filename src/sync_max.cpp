@@ -115,6 +115,20 @@ void callbackPanelPreRender(const MString& _str, void* _clientData)
 	}
 }
 
+void callbackNodeMatrixModified(MObject& _node, MDagMessage::MatrixModifiedFlags& _modified, void* _clientData)
+{
+	MFnDependencyNode fn(_node);
+
+	if ((s_transformChangedQueue.size() == 0) || (_node != s_transformChangedQueue.front().m_object))
+	{
+		QueueObject object;
+		object.m_name = getNodeName(_node);
+		object.m_object = _node;
+		s_transformChangedQueue.push(object);
+		MGlobal::displayInfo("Transform added to queue.");
+	}
+}
+
 void callbackNodeAttributeChanged(MNodeMessage::AttributeMessage _msg, MPlug& _plug, MPlug& _otherPlug, void* _clientData)
 {
 	MObject node = _plug.node();
@@ -148,6 +162,11 @@ void callbackNodeAdded(MObject& _node, void* _clientData)
 			object.m_object = _node;
 			s_meshChangedQueue.push(object);
 			MGlobal::displayInfo("Mesh added to queue.");
+
+			MDagMessage::MatrixModifiedFlags flags;
+			callbackNodeMatrixModified(MFnDagNode(_node).parent(0), flags, NULL);
+
+			// @todo For each child call callbackNodeAdded()?
 		}
 	}
 }
@@ -164,20 +183,6 @@ void callbackNodeRemoved(MObject& _node, void* _clientData)
 			s_meshRemovedQueue.push(object);
 			MGlobal::displayInfo("Mesh added to removal queue.");
 		}
-	}
-}
-
-void callbackWorldMatrixModified(MObject& _node, MDagMessage::MatrixModifiedFlags& _modified, void* _clientData)
-{
-	MFnDependencyNode fn(_node);
-	
-	if ((s_transformChangedQueue.size() == 0) || (_node != s_transformChangedQueue.front().m_object))
-	{
-		QueueObject object;
-		object.m_name = getNodeName(_node);
-		object.m_object = _node;
-		s_transformChangedQueue.push(object);
-		MGlobal::displayInfo("Transform added to queue.");
 	}
 }
 
@@ -251,7 +256,7 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 			MStatus status;
 			MCallbackId id = MDagMessage::addWorldMatrixModifiedCallback(
 				path,
-				callbackWorldMatrixModified,
+				callbackNodeMatrixModified,
 				NULL,
 				&status
 			);
@@ -366,7 +371,7 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 
 	// Update transforms.
 	SharedData::TransformEvent& transformEvent = s_shared->m_transformChanged;
-	if (!s_transformChangedQueue.empty())
+	if (!s_transformChangedQueue.empty() && s_meshChangedQueue.empty())
 	{
 		MString& name = s_transformChangedQueue.front().m_name;
 		MObject& node = s_transformChangedQueue.front().m_object;
@@ -388,6 +393,7 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 
 		MQuaternion rotation;
 		transform.getRotationQuaternion(rotation.x, rotation.y, rotation.z, rotation.w, MSpace::kWorld);
+		rotation = rotation.inverse();
 
 		double scaleValue[3];
 		transform.getScale(scaleValue);
@@ -398,7 +404,7 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 		transformEvent.m_pos[2]      = (float)translation.z;
 		transformEvent.m_rotation[0] = (float)rotation.x;
 		transformEvent.m_rotation[1] = (float)rotation.y;
-		transformEvent.m_rotation[2] = (float)-rotation.z;
+		transformEvent.m_rotation[2] = (float)rotation.z;
 		transformEvent.m_rotation[3] = (float)rotation.w;
 		transformEvent.m_scale[0]    = (float)scale.x;
 		transformEvent.m_scale[1]    = (float)scale.y;
@@ -448,15 +454,23 @@ EXPORT MStatus initializePlugin(MObject obj)
 
 	// Create shared data
 	s_shared = new SharedData();
-
+	
 	// Add timer callback
 	s_callbackIdArray.append(MTimerMessage::addTimerCallback(
-		0.03f,
+		0.05f,
 		callbackTimer,
 		NULL,
 		&status
 	));
-	
+
+	// Go over current scene and queue all meshes
+	MItDag dagIt(MItDag::kBreadthFirst, MFn::kInvalid, &status);
+	for (; !dagIt.isDone(); dagIt.next())
+	{
+		MObject node = dagIt.currentItem();
+		callbackNodeAdded(node, NULL);
+	}
+
 	// Add camera callback 
 	M3dView activeView = M3dView::active3dView();
 	MDagPath dag;
