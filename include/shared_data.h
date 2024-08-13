@@ -16,23 +16,13 @@
 ///
 struct SharedData
 {
-	bool m_processed;
-
 	//
-	struct SyncEvent
-	{
-		bool m_isSynced;
-	} m_sync;
-
-	//
-	struct CameraEvent
+	struct CameraUpdate
 	{
 		float m_view[16];
 		float m_proj[16];
 	} m_camera;
 
-	// If name doesnt exist in scene, add it. If it does exist, change it.
-	//
 	struct MeshEvent
 	{
 		char m_name[1024];

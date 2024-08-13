@@ -59,6 +59,7 @@
 #include <maya/MSceneMessage.h>
 #include <maya/MUserEventMessage.h>
 #include <maya/MPxCommand.h>
+#include <maya/MStreamUtils.h>
 
 // Libraries to link from Maya
 // This can be also done in the properties setting for the project.
