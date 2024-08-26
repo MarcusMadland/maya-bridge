@@ -2,7 +2,7 @@
 // @todo Remove std:: deps
 // @todo Clean up header.
 
-#include "../include/sync_max.h"
+#include "../include/maya_bridge.h"
 #include "../include/shared_data.h"
 
 #include <bx/sharedbuffer.h>
@@ -17,6 +17,9 @@ static SharedData* s_shared = NULL;
 
 static MCallbackIdArray s_callbackIdArray;
 
+void init();
+void shutdown();
+
 static std::queue<MObject> s_nodeAddedQueue;
 
 struct QueueObject
@@ -28,7 +31,33 @@ struct QueueObject
 static std::queue<QueueObject> s_meshChangedQueue;
 static std::queue<QueueObject> s_meshRemovedQueue;
 static std::queue<QueueObject> s_transformChangedQueue;
+static std::queue<QueueObject> s_materialChangedQueue;
 
+static void clearAllQueue()
+{
+	while (!s_nodeAddedQueue.empty()) 
+	{
+		s_nodeAddedQueue.pop();
+	}
+	while (!s_meshChangedQueue.empty())
+	{
+		s_meshChangedQueue.pop();
+	}
+	while (!s_meshRemovedQueue.empty())
+	{
+		s_meshRemovedQueue.pop();
+	}
+	while (!s_transformChangedQueue.empty())
+	{
+		s_transformChangedQueue.pop();
+	}
+	while (!s_materialChangedQueue.empty())
+	{
+		s_materialChangedQueue.pop();
+	}
+}
+
+// @todo Optimize using something else instead of std::queue?
 static bool isInQueue(std::queue<QueueObject>& _queue, const QueueObject& _object)
 {
 	std::queue<QueueObject> tempQueue;
@@ -45,7 +74,6 @@ static bool isInQueue(std::queue<QueueObject>& _queue, const QueueObject& _objec
 		tempQueue.push(frontItem);
 	}
 
-	// Restore the original queue
 	while (!tempQueue.empty()) 
 	{
 		_queue.push(tempQueue.front());
@@ -63,6 +91,14 @@ void addMeshQueue(MObject& _node, const MString& _name)
 	s_meshChangedQueue.push(object);
 }
 
+void addMeshRemoveQueue(MObject& _node, const MString& _name)
+{
+	QueueObject object;
+	object.m_name = _name;
+	object.m_object = _node;
+	s_meshRemovedQueue.push(object);
+}
+
 void addTransformQueue(MObject& _node, const MString& _name)
 {
 	if (s_transformChangedQueue.empty() || s_transformChangedQueue.front().m_name != _name)
@@ -71,19 +107,26 @@ void addTransformQueue(MObject& _node, const MString& _name)
 		object.m_name = _name;
 		object.m_object = _node;
 
-		if (!isInQueue(s_transformChangedQueue, object)) // @todo Optimize using something else instead of std::queue?
+		if (!isInQueue(s_transformChangedQueue, object)) 
 		{
 			s_transformChangedQueue.push(object);
 		}
 	}
 }
 
-void addMeshRemoveQueue(MObject& _node, const MString& _name)
+void addMaterialQueue(MObject& _node, const MString& _name)
 {
-	QueueObject object;
-	object.m_name = _name;
-	object.m_object = _node;
-	s_meshRemovedQueue.push(object);
+	if (s_materialChangedQueue.empty() || s_materialChangedQueue.front().m_name != _name)
+	{
+		QueueObject object;
+		object.m_name = _name;
+		object.m_object = _node;
+
+		if (!isInQueue(s_materialChangedQueue, object)) 
+		{
+			s_materialChangedQueue.push(object);
+		}
+	}
 }
 
 void callbackPanelPreRender(const MString& _str, void* _clientData)
@@ -123,10 +166,19 @@ void callbackPanelPreRender(const MString& _str, void* _clientData)
 			return;
 		}
 
-		// 
-		SharedData::CameraUpdate& event = s_shared->m_camera;
-		for (uint32_t ii = 0; ii < 16; ++ii) event.m_view[ii] = static_cast<float>(view[ii / 4][ii % 4]);
-		for (uint32_t ii = 0; ii < 16; ++ii) event.m_proj[ii] = static_cast<float>(proj[ii / 4][ii % 4]);
+		// Construct
+		SharedData::CameraUpdate& camera = s_shared->m_camera;
+
+		for (uint32_t ii = 0; ii < 16; ++ii)
+		{
+			camera.m_view[ii] = static_cast<float>(view[ii / 4][ii % 4]);
+		}
+		for (uint32_t ii = 0; ii < 16; ++ii)
+		{
+			camera.m_proj[ii] = static_cast<float>(proj[ii / 4][ii % 4]);
+		}
+
+		// Write
 		s_buffer->write(s_shared, sizeof(SharedData));
 	}
 }
@@ -142,6 +194,12 @@ void callbackNodeMatrixModified(MObject& _node, MDagMessage::MatrixModifiedFlags
 	{
 		callbackNodeMatrixModified(dagNode.child(ii), _modified, _clientData);
 	}
+}
+
+void callbackNodeAttributeChanged(MNodeMessage::AttributeMessage _msg, MPlug& _plug, MPlug& _otherPlug, void* _clientData)
+{
+	// We can't add QueueObject directly here because the node doesnt have a scene name yet.
+	s_nodeAddedQueue.push(_plug.node());
 }
 
 void callbackNodeAdded(MObject& _node, void* _clientData)
@@ -161,6 +219,93 @@ void callbackNodeRemoved(MObject& _node, void* _clientData)
 	}
 }
 
+void printAllAttributes(MObject materialNode) 
+{
+	MFnStandardSurfaceShader standardSurface(materialNode);
+
+	MPlugArray plugs;
+	standardSurface.getConnections(plugs);
+
+	if (plugs.length() > 0)
+	{
+		for (uint32_t ii = 0; ii < plugs.length(); ++ii)
+		{
+			MPlug plug = plugs[ii];
+
+			// Color Map
+			if (plug.partialName() == "bc")
+			{
+				// Find texture
+				MPlugArray connectedPlugs;
+				plug.connectedTo(connectedPlugs, true, false);
+
+				for (unsigned int j = 0; j < connectedPlugs.length(); ++j)
+				{
+					MPlug connectedPlug = connectedPlugs[j];
+					MObject connectedNode = connectedPlug.node();
+
+					// Check if the connected node is a file texture node
+					MFnDependencyNode connectedNodeFn(connectedNode);
+					if (connectedNodeFn.typeName() == "file")
+					{
+						MFnDependencyNode fileNodeFn(connectedNode);
+						MPlug filePathPlug = fileNodeFn.findPlug("fileTextureName", true);
+						if (!filePathPlug.isNull())
+						{
+							MString textureFilePath = filePathPlug.asString();
+							MStreamUtils::stdOutStream() << "	color map: " << textureFilePath << "\n";
+						}
+					}
+				}
+			}
+			// Normal Map
+			else if (plug.partialName() == "n")
+			{
+				// Find texture
+				MPlugArray connectedPlugs;
+				plug.connectedTo(connectedPlugs, true, false);
+
+				for (unsigned int j = 0; j < connectedPlugs.length(); ++j)
+				{
+					MPlug connectedPlug = connectedPlugs[j];
+					MObject connectedNode = connectedPlug.node();
+
+					// Check if the connected node is a file texture node
+					MFnDependencyNode connectedNodeFn(connectedNode);
+
+					if (connectedNodeFn.typeName() == "bump2d" || connectedNodeFn.typeName() == "bump3d" || connectedNodeFn.typeName() == "aiNormalMap")
+					{
+						MPlug bumpMapPlug = connectedNodeFn.findPlug("bumpValue", true);
+						MFnDependencyNode normalConnectedNodeFn(bumpMapPlug);
+
+						if (normalConnectedNodeFn.typeName() == "file")
+						{
+							MFnDependencyNode fileNodeFn(bumpMapPlug);
+							MPlug filePathPlug = fileNodeFn.findPlug("fileTextureName", true);
+							if (!filePathPlug.isNull())
+							{
+								MString textureFilePath = filePathPlug.asString();
+								MStreamUtils::stdOutStream() << "	normal map: " << textureFilePath << "\n";
+							}
+						}
+					}
+
+					
+				}
+			}
+			// Other...
+			else
+			{
+				MStreamUtils::stdOutStream() << "	connection: " << plug.partialName() << "\n";
+			}
+		}
+	}
+	else
+	{
+		MStreamUtils::stdOutStream() << "No connections on material..." << "\n";
+	}
+}
+
 void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 {
 	uint32_t status = UINT32_MAX;
@@ -169,6 +314,8 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 	if (!s_nodeAddedQueue.empty())
 	{
 		MObject& node = s_nodeAddedQueue.front();
+
+		// On entity add.
 		if (node.hasFn(MFn::kTransform))
 		{
 			MFnDagNode dagNode = MFnDagNode(node);
@@ -181,15 +328,25 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 				{
 					addTransformQueue(node, nodeName);
 					addMeshQueue(child, nodeName);
+					addMaterialQueue(child, nodeName);
 				}
 			}
 		}
+
 		s_nodeAddedQueue.pop();
 		return;
 	}
 	
+	// Reload scene.
+	if (status & SHARED_DATA_MESSAGE_RELOAD_SCENE)
+	{
+		shutdown();
+		clearAllQueue();
+		init();
+	}
+
 	// Update events.
-	if (status == 1)
+	if (status & SHARED_DATA_MESSAGE_RECEIVED)
 	{
 		// Update mesh. 
 		SharedData::MeshEvent& meshEvent = s_shared->m_meshChanged;
@@ -299,22 +456,34 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 				}
 
 				// Get UVs
-				MString uvSetName;
-				fnMesh.getCurrentUVSetName(uvSetName);
-
 				MFloatArray uArray, vArray;
-				fnMesh.getUVs(uArray, vArray, &uvSetName);
+				fnMesh.getUVs(uArray, vArray);  // Get the UV arrays
+
 				if (uArray.length() <= SHARED_DATA_CONFIG_MAX_VERTICES && vArray.length() <= SHARED_DATA_CONFIG_MAX_VERTICES)
 				{
-					for (uint32_t ii = 0; ii < uArray.length(); ++ii)
+					MItMeshPolygon faceIter(fnMesh.object());  // Iterate over the faces of the mesh
+					uint32_t uvIdx = 0;
+
+					for (; !faceIter.isDone(); faceIter.next())
 					{
-						meshEvent.m_vertices[ii][6] = uArray[ii];
-						meshEvent.m_vertices[ii][7] = vArray[ii];
+						int numVertices = faceIter.polygonVertexCount();
+
+						for (int i = 0; i < numVertices; ++i)
+						{
+							int vertexIndex = faceIter.vertexIndex(i);
+							int uvIndex;
+							faceIter.getUVIndex(i, uvIndex);
+
+							meshEvent.m_vertices[vertexIndex][6] = uArray[uvIndex];
+							meshEvent.m_vertices[vertexIndex][7] = 1.0f - vArray[uvIndex];  // Invert V if necessary
+
+							uvIdx++;
+						}
 					}
 				}
 				else
 				{
-					MGlobal::displayError("Mesh UVs are too big for shared memory.");
+					MGlobal::displayError("Mesh UVs are too many for shared memory.");
 					s_meshChangedQueue.pop();
 					return;
 				}
@@ -399,8 +568,129 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 			s_buffer->write(s_shared, sizeof(SharedData));
 		}
 
+		// Update material.
+		SharedData::MaterialEvent& materialEvent = s_shared->m_materialChanged;
+		if (!s_materialChangedQueue.empty() && s_meshChangedQueue.empty())
+		{
+			MString& name = s_materialChangedQueue.front().m_name;
+			MObject& node = s_materialChangedQueue.front().m_object;
+
+			//
+			bx::strCopy(materialEvent.m_name, 1024, name.asChar());
+			MStreamUtils::stdOutStream() << "MaterialEvent: Changing... [" << materialEvent.m_name << "]" << "\n";
+
+			//
+			MFnDagNode dagNode = MFnDagNode(node);
+			MString meshName = MFnDagNode(dagNode.parent(0)).fullPathName();
+			MStreamUtils::stdOutStream() << "	mesh: " << meshName << "\n";
+
+			MFnMesh meshForShade(node);
+			MObjectArray shaders;
+			unsigned int instanceNumber = meshForShade.instanceCount(false, NULL);
+			MIntArray shade_indices;
+			meshForShade.getConnectedShaders(0, shaders, shade_indices);
+			int lLength = shaders.length();
+			MPlug surfaceShade;
+			MPlugArray connectedPlugs;
+			MObject connectedPlug;
+
+			switch (shaders.length())
+			{
+				case 0:
+					break;
+
+				case 1:
+				{
+					surfaceShade = MFnDependencyNode(shaders[0]).findPlug("surfaceShader", &status);
+					if (surfaceShade.isNull())
+					{
+						break;
+					}
+
+					surfaceShade.connectedTo(connectedPlugs, true, false);
+					if (connectedPlugs.length() != 1)
+					{
+						break;
+					}
+
+					connectedPlug = connectedPlugs[0].node();
+					MStreamUtils::stdOutStream() << "	material: " << MFnDependencyNode(connectedPlug).name() << "\n";
+
+					MFnStandardSurfaceShader standardSurface(connectedPlug);
+
+					MPlugArray plugs;
+					standardSurface.getConnections(plugs);
+
+					if (plugs.length() > 0)
+					{
+						for (uint32_t ii = 0; ii < plugs.length(); ++ii)
+						{
+							MPlug plug = plugs[ii];
+
+							// Color Map
+							if (plug.partialName() == "bc")
+							{
+								// Find texture
+								MPlugArray connectedPlugs;
+								plug.connectedTo(connectedPlugs, true, false);
+
+								for (unsigned int j = 0; j < connectedPlugs.length(); ++j)
+								{
+									MPlug connectedPlug = connectedPlugs[j];
+									MObject connectedNode = connectedPlug.node();
+
+									// Check if the connected node is a file texture node
+									MFnDependencyNode connectedNodeFn(connectedNode);
+									if (connectedNodeFn.typeName() == "file")
+									{
+										MFnDependencyNode fileNodeFn(connectedNode);
+										MPlug filePathPlug = fileNodeFn.findPlug("fileTextureName", true);
+										if (!filePathPlug.isNull())
+										{
+											MString textureFilePath = filePathPlug.asString();
+											MStreamUtils::stdOutStream() << "	color map: " << textureFilePath << "\n";
+											bx::strCopy(materialEvent.m_colorPath, 1024, textureFilePath.asChar());
+										}
+									}
+								}
+							}
+							// Normal Map
+							else if (plug.partialName() == "n")
+							{
+								
+							}
+							// Other...
+							else
+							{
+								MStreamUtils::stdOutStream() << "	connection: " << plug.partialName() << "\n";
+							}
+						}
+					}
+					else
+					{
+						MStreamUtils::stdOutStream() << "No connections on material..." << "\n";
+					}
+				}
+				break;
+				default:
+				{
+					break;
+				}
+			}
+
+			s_materialChangedQueue.pop();
+
+			materialEvent.m_changed = true;
+			s_buffer->write(s_shared, sizeof(SharedData));
+		}
+		else
+		{
+			materialEvent.m_changed = false;
+			s_buffer->write(s_shared, sizeof(SharedData));
+		}
+
 		// Update status.
-		status = 0;
+		status = SHARED_DATA_MESSAGE_NONE;
 		s_readbuffer->write(&status, sizeof(uint32_t));
 	}
 }
@@ -410,38 +700,10 @@ constexpr const char* kPanel2 = "modelPanel2";
 constexpr const char* kPanel3 = "modelPanel3";
 constexpr const char* kPanel4 = "modelPanel4";
 
-/*
-* Plugin entry point
-* For remote control of maya
-* open command port: commandPort -name ":1234"
-* close command port: commandPort -cl -name ":1234"
-* send command: see loadPlugin.py and unloadPlugin.py
-*/
-EXPORT MStatus initializePlugin(MObject obj) 
+void init()
 {
-	MStatus status = MS::kSuccess;
+	MStatus status;
 
-	// Create plugin
-	MFnPlugin plugin = MFnPlugin(obj, "Max Sync | Level Editor", "1.0", "Any", &status);
-
-	// Initialize the shared memory
-	s_buffer = new bx::SharedBuffer();
-	if (!s_buffer->init("maya-bridge", sizeof(SharedData)))
-	{
-		MGlobal::displayError("Failed to sync shared memory");
-		return status;
-	}
-
-	s_readbuffer = new bx::SharedBuffer();
-	if (!s_readbuffer->init("maya-bridge-read", sizeof(uint32_t)))
-	{
-		MGlobal::displayError("Failed to sync shared memory");
-		return status;
-	}
-
-	// Create shared data
-	s_shared = new SharedData();
-	
 	// Add timer callback
 	s_callbackIdArray.append(MTimerMessage::addTimerCallback(
 		0.01f,
@@ -451,7 +713,7 @@ EXPORT MStatus initializePlugin(MObject obj)
 	));
 
 	// Go over current scene and queue all meshes
-	MItDag dagIt(MItDag::kBreadthFirst, MFn::kInvalid, &status);
+	MItDag dagIt = MItDag(MItDag::kBreadthFirst, MFn::kInvalid, &status);
 	for (; !dagIt.isDone(); dagIt.next())
 	{
 		MObject node = dagIt.currentItem();
@@ -504,7 +766,44 @@ EXPORT MStatus initializePlugin(MObject obj)
 		&status
 	));
 
-	MGlobal::displayInfo("Max Sync plugin loaded!");
+	MGlobal::displayInfo("Initialized plugin!");
+}
+
+void shutdown()
+{
+	MMessage::removeCallbacks(s_callbackIdArray);
+
+	MGlobal::displayInfo("Shutdown plugin!");
+}
+
+EXPORT MStatus initializePlugin(MObject obj) 
+{
+	MStatus status = MS::kSuccess;
+
+	// Create plugin.
+	MFnPlugin plugin = MFnPlugin(obj, "Maya Bridge | MAX Level Editor", "2.1", "Any", &status);
+
+	// Initialize the shared memory.
+	s_buffer = new bx::SharedBuffer();
+	if (!s_buffer->init("maya-bridge", sizeof(SharedData)))
+	{
+		MGlobal::displayError("Failed to sync shared memory");
+		return status;
+	}
+
+	s_readbuffer = new bx::SharedBuffer();
+	if (!s_readbuffer->init("maya-bridge-read", sizeof(uint32_t)))
+	{
+		MGlobal::displayError("Failed to sync shared memory");
+		return status;
+	}
+
+	// Create shared data.
+	s_shared = new SharedData();
+	
+	// Initialize plugin.
+	init();
+
 	return status;
 }
 
@@ -512,14 +811,14 @@ EXPORT MStatus uninitializePlugin(MObject obj)
 {
 	MStatus status = MS::kSuccess;
 
-	// Remove the callback timer for update
-	MMessage::removeCallbacks(s_callbackIdArray);
+	// Shutdown plugin.
+	shutdown();
 
-	// Delete shared data
+	// Delete shared data.
 	delete s_shared;
 	s_shared = NULL;
 
-	// Shutdown the shared memory 
+	// Shutdown the shared memory.
 	s_buffer->shutdown();
 	delete s_buffer;
 	s_buffer = NULL;
@@ -528,9 +827,8 @@ EXPORT MStatus uninitializePlugin(MObject obj)
 	delete s_readbuffer;
 	s_readbuffer = NULL;
 
-	// 
+	// Destroy plugin.
 	MFnPlugin plugin(obj);
 
-	MGlobal::displayInfo(MString("Max Sync plugin unloaded!"));
 	return status;
 }

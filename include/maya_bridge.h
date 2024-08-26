@@ -15,10 +15,12 @@
 #include <maya/MFnTransform.h>
 #include <maya/MFnCamera.h>
 #include <maya/MFnDependencyNode.h>
+#include <maya/MItDependencyGraph.h>
 #include <maya/MFnLambertShader.h>
 #include <maya/MFnBlinnShader.h>
 #include <maya/MFnPhongShader.h>
 #include <maya/MFnPointLight.h>
+#include "maya/MFnStandardSurfaceShader.h">
 #include <maya/MFnAmbientLight.h>
 #include <maya/MFnDirectionalLight.h>
 #include <maya/MFnSpotLight.h>
@@ -40,6 +42,7 @@
 #include <maya/MItDependencyNodes.h>
 #include <maya/MFnNumericAttribute.h>
 #include <maya/MPx3dModelView.h>
+#include <maya/MFnSet.h>
 
 // Wrappers
 #include <maya/MGlobal.h>

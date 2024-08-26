@@ -35,7 +35,7 @@ file(TO_CMAKE_PATH "${BX_DIR}" BX_DIR)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cmake/bx)
 
 # MAYA
-set(MAYA_VERSION 2020 CACHE STRING "Maya version")
+set(MAYA_VERSION 2024 CACHE STRING "Maya version")
 find_package(Maya REQUIRED)
 
 # Plugin
