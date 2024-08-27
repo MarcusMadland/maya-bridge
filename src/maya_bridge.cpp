@@ -306,6 +306,131 @@ void printAllAttributes(MObject materialNode)
 	}
 }
 
+static void vertexIterator(MObject& node, std::vector<int>& trianglesPerPolygon, std::vector<int>& index, std::vector<std::vector<float>>& position, std::vector<std::vector<float>>& normal, std::vector<std::vector<float>>& uv)
+{
+	MItMeshVertex itvertex(node, NULL);
+
+	MItMeshFaceVertex itFace(node, NULL);
+
+	MStatus triangleCoutStatus = MStatus::kFailure;
+	MStatus vertexArrStatus = MStatus::kFailure;
+	MStatus vertexFoundStatus = MStatus::kFailure;
+	MStatus normalFindStatus = MStatus::kFailure;
+	MStatus uvAtpointStatus = MStatus::kFailure;
+	MStatus normalIDstatus = MStatus::kFailure;
+	MStatus triangelOffsetStatus = MStatus::kFailure;
+	MStatus uvfromIDs = MStatus::kFailure;
+	MStatus normalNewTest = MStatus::kFailure;
+
+	MStatus vertexReturn = MStatus::kFailure;
+
+	MIntArray triangleCounts, triangleVertices;
+	MIntArray vertexCount, vertexList;
+	MIntArray normalCount, normalIds;
+	MFnDependencyNode fn(node);
+
+	std::vector<std::vector<float>> pPositions;
+	std::vector<std::vector<float>> pNormals;
+	std::vector<std::vector<float>> pUVs;
+	std::vector<int> triIndex;
+
+	// This returns the actual Mesh node alowing to acces its values in MSpace::kWorld.
+	MDagPath path;
+	MFnDagNode(node).getPath(path);
+	MFnMesh mesh(path, NULL);
+	MItMeshPolygon itpolygon(path, MObject::kNullObj, NULL);
+
+	MIntArray triangleCounts1, triangleIndeces;
+	int polynum = mesh.numPolygons(NULL);
+
+	if (triangleCoutStatus = mesh.getTriangles(triangleCounts, triangleVertices))
+	{
+		for (int i = 0; i < triangleCounts.length(); i++)
+		{
+			trianglesPerPolygon.push_back(triangleCounts[i]);
+		}
+	}
+
+	if (triangelOffsetStatus = mesh.getTriangleOffsets(triangleCounts1, triangleIndeces))
+	{
+		for (int i = 0; i < triangleIndeces.length(); i++)
+		{
+			index.push_back(triangleIndeces[i]);
+		}
+	}
+
+	MPointArray vertexArr;
+
+	if (vertexReturn = mesh.getVertices(vertexCount, vertexList))
+	{
+		std::vector<int> uvIndex;
+		for (int i = 0; i < vertexCount.length(); i++)
+		{
+			for (int j = 0; j < int(vertexCount[i]); j++)
+			{
+				int uvID;
+				// Returns UV id per face, per vertex.
+				if (uvAtpointStatus = mesh.getPolygonUVid(i, j, uvID, NULL))
+				{
+					uvIndex.push_back(uvID);
+				}
+
+				MVector normaltest;
+				// Returns Polygon normals per face. 
+				if (normalNewTest = mesh.getPolygonNormal(i, normaltest, MSpace::kWorld))
+				{
+					float nx, ny, nz;
+					nx = (float)normaltest.x;
+					ny = (float)normaltest.y;
+					nz = (float)normaltest.z;
+
+					std::vector<float> norms;
+					norms.push_back(nx);
+					norms.push_back(ny);
+					norms.push_back(nz);
+					norms.push_back(1.0f);
+
+					normal.push_back(norms);
+				}
+			}
+		}
+		for (int i = 0; i < vertexList.length(); i++)
+		{
+			MPoint point;
+			// Returns Vertex positions.
+			float2 uvPoint;
+
+			if (vertexFoundStatus = mesh.getPoint(vertexList[i], point, MSpace::kObject))
+			{
+				float x, y, z;
+				x = (float)point.x;
+				y = (float)point.y;
+				z = (float)point.z;
+
+				std::vector<float> posit;
+				posit.push_back(x);
+				posit.push_back(y);
+				posit.push_back(z);
+
+				position.push_back(posit);
+			}
+		}
+		for (int i = 0; i < uvIndex.size(); i++)
+		{
+			float u, v;
+			// Returns U and V values for uv index.
+			if (uvfromIDs = mesh.getUV(uvIndex.at(i), u, v, NULL))
+			{
+				std::vector<float> uvs;
+				uvs.push_back(u);
+				uvs.push_back(v);
+
+				uv.push_back(uvs);
+			}
+		}
+	}
+}
+
 void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 {
 	uint32_t status = UINT32_MAX;
@@ -416,93 +541,75 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 			MFnMesh fnMesh(node, &status);
 			if (status == MS::kSuccess)
 			{
-				// Get positions
-				MFloatPointArray vertexArray;
-				fnMesh.getPoints(vertexArray, MSpace::kObject);
-				meshEvent.m_numVertices = vertexArray.length();
+				std::vector<int> trisPerPoly;
+				std::vector<int> index;
+				std::vector<std::vector<float>> position;
+				std::vector<std::vector<float>> normal;
+				std::vector<std::vector<float>> uv;
+				vertexIterator(node, trisPerPoly, index, position, normal, uv);
+
+				// Get vertex positions
+				meshEvent.m_numVertices = position.size();
 				if (meshEvent.m_numVertices <= SHARED_DATA_CONFIG_MAX_VERTICES)
 				{
 					for (uint32_t ii = 0; ii < meshEvent.m_numVertices; ++ii)
 					{
-						meshEvent.m_vertices[ii][0] = vertexArray[ii].x;
-						meshEvent.m_vertices[ii][1] = vertexArray[ii].y;
-						meshEvent.m_vertices[ii][2] = vertexArray[ii].z; // Conversion to left handed
+						meshEvent.m_vertices[ii][0] = (float)position[ii][0];
+						meshEvent.m_vertices[ii][1] = (float)position[ii][1];
+						meshEvent.m_vertices[ii][2] = (float)position[ii][2];
 					}
 				}
 				else
 				{
 					MGlobal::displayError("Mesh vertices are too big for shared memory.");
-					s_meshChangedQueue.pop();
 					return;
 				}
 
 				// Get normals
-				MFloatVectorArray normals;
-				fnMesh.getNormals(normals, MSpace::kObject);
-				if (normals.length() <= SHARED_DATA_CONFIG_MAX_VERTICES)
+				uint32_t numNormals = normal.size();
+				if (numNormals <= SHARED_DATA_CONFIG_MAX_VERTICES)
 				{
-					for (uint32_t ii = 0; ii < normals.length(); ++ii)
+					for (uint32_t ii = 0; ii < numNormals; ++ii)
 					{
-						meshEvent.m_vertices[ii][3] = normals[ii].x;
-						meshEvent.m_vertices[ii][4] = normals[ii].y;
-						meshEvent.m_vertices[ii][5] = normals[ii].z;
+						meshEvent.m_vertices[ii][3] = (float)normal[ii][0];
+						meshEvent.m_vertices[ii][4] = (float)normal[ii][1];
+						meshEvent.m_vertices[ii][5] = (float)normal[ii][2];
 					}
 				}
 				else
 				{
 					MGlobal::displayError("Mesh normals are too big for shared memory.");
-					s_meshChangedQueue.pop();
 					return;
 				}
 
 				// Get UVs
-				MFloatArray uArray, vArray;
-				fnMesh.getUVs(uArray, vArray);  // Get the UV arrays
-
-				if (uArray.length() <= SHARED_DATA_CONFIG_MAX_VERTICES && vArray.length() <= SHARED_DATA_CONFIG_MAX_VERTICES)
+				uint32_t numUVs = uv.size();
+				if (numUVs <= SHARED_DATA_CONFIG_MAX_VERTICES)
 				{
-					MItMeshPolygon faceIter(fnMesh.object());  // Iterate over the faces of the mesh
-					uint32_t uvIdx = 0;
-
-					for (; !faceIter.isDone(); faceIter.next())
+					for (uint32_t ii = 0; ii < numUVs; ++ii)
 					{
-						int numVertices = faceIter.polygonVertexCount();
-
-						for (int i = 0; i < numVertices; ++i)
-						{
-							int vertexIndex = faceIter.vertexIndex(i);
-							int uvIndex;
-							faceIter.getUVIndex(i, uvIndex);
-
-							meshEvent.m_vertices[vertexIndex][6] = uArray[uvIndex];
-							meshEvent.m_vertices[vertexIndex][7] = 1.0f - vArray[uvIndex];  // Invert V if necessary
-
-							uvIdx++;
-						}
+						meshEvent.m_vertices[ii][6] = (float)uv[ii][0];
+						meshEvent.m_vertices[ii][7] = -(float)uv[ii][1];
 					}
 				}
 				else
 				{
 					MGlobal::displayError("Mesh UVs are too many for shared memory.");
-					s_meshChangedQueue.pop();
 					return;
 				}
 
 				// Get indices
-				MIntArray triangleCounts, triangleVertices;
-				fnMesh.getTriangles(triangleCounts, triangleVertices);
-				meshEvent.m_numIndices = triangleVertices.length();
+				meshEvent.m_numIndices = index.size();
 				if (meshEvent.m_numIndices <= SHARED_DATA_CONFIG_MAX_INDICES)
 				{
 					for (uint32_t ii = 0; ii < meshEvent.m_numIndices; ++ii)
 					{
-						meshEvent.m_indices[ii] = static_cast<uint16_t>(triangleVertices[ii]);
+						meshEvent.m_indices[ii] = static_cast<uint32_t>(index[ii]);
 					}
 				}
 				else
 				{
 					MGlobal::displayError("Mesh indices are too many for shared memory.");
-					s_meshChangedQueue.pop();
 					return;
 				}
 			}

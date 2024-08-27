@@ -14,7 +14,7 @@
 
 ///
 #ifndef SHARED_DATA_CONFIG_MAX_INDICES
-	#define SHARED_DATA_CONFIG_MAX_INDICES SHARED_DATA_MB(4) / sizeof(uint16_t)
+	#define SHARED_DATA_CONFIG_MAX_INDICES SHARED_DATA_MB(4) / sizeof(uint32_t)
 #endif
 
 ///
@@ -42,7 +42,7 @@ struct SharedData
 		float m_vertices[SHARED_DATA_CONFIG_MAX_VERTICES][SHARED_DATA_NUM_FLOAT_PER_VERTEX];
 		uint32_t m_numVertices;
 
-		uint16_t m_indices[SHARED_DATA_CONFIG_MAX_INDICES];
+		uint32_t m_indices[SHARED_DATA_CONFIG_MAX_INDICES];
 		uint32_t m_numIndices;
 
 	} m_meshChanged;
