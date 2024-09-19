@@ -219,93 +219,6 @@ void callbackNodeRemoved(MObject& _node, void* _clientData)
 	}
 }
 
-void printAllAttributes(MObject materialNode) 
-{
-	MFnStandardSurfaceShader standardSurface(materialNode);
-
-	MPlugArray plugs;
-	standardSurface.getConnections(plugs);
-
-	if (plugs.length() > 0)
-	{
-		for (uint32_t ii = 0; ii < plugs.length(); ++ii)
-		{
-			MPlug plug = plugs[ii];
-
-			// Color Map
-			if (plug.partialName() == "bc")
-			{
-				// Find texture
-				MPlugArray connectedPlugs;
-				plug.connectedTo(connectedPlugs, true, false);
-
-				for (unsigned int j = 0; j < connectedPlugs.length(); ++j)
-				{
-					MPlug connectedPlug = connectedPlugs[j];
-					MObject connectedNode = connectedPlug.node();
-
-					// Check if the connected node is a file texture node
-					MFnDependencyNode connectedNodeFn(connectedNode);
-					if (connectedNodeFn.typeName() == "file")
-					{
-						MFnDependencyNode fileNodeFn(connectedNode);
-						MPlug filePathPlug = fileNodeFn.findPlug("fileTextureName", true);
-						if (!filePathPlug.isNull())
-						{
-							MString textureFilePath = filePathPlug.asString();
-							MStreamUtils::stdOutStream() << "	color map: " << textureFilePath << "\n";
-						}
-					}
-				}
-			}
-			// Normal Map
-			else if (plug.partialName() == "n")
-			{
-				// Find texture
-				MPlugArray connectedPlugs;
-				plug.connectedTo(connectedPlugs, true, false);
-
-				for (unsigned int j = 0; j < connectedPlugs.length(); ++j)
-				{
-					MPlug connectedPlug = connectedPlugs[j];
-					MObject connectedNode = connectedPlug.node();
-
-					// Check if the connected node is a file texture node
-					MFnDependencyNode connectedNodeFn(connectedNode);
-
-					if (connectedNodeFn.typeName() == "bump2d" || connectedNodeFn.typeName() == "bump3d" || connectedNodeFn.typeName() == "aiNormalMap")
-					{
-						MPlug bumpMapPlug = connectedNodeFn.findPlug("bumpValue", true);
-						MFnDependencyNode normalConnectedNodeFn(bumpMapPlug);
-
-						if (normalConnectedNodeFn.typeName() == "file")
-						{
-							MFnDependencyNode fileNodeFn(bumpMapPlug);
-							MPlug filePathPlug = fileNodeFn.findPlug("fileTextureName", true);
-							if (!filePathPlug.isNull())
-							{
-								MString textureFilePath = filePathPlug.asString();
-								MStreamUtils::stdOutStream() << "	normal map: " << textureFilePath << "\n";
-							}
-						}
-					}
-
-					
-				}
-			}
-			// Other...
-			else
-			{
-				MStreamUtils::stdOutStream() << "	connection: " << plug.partialName() << "\n";
-			}
-		}
-	}
-	else
-	{
-		MStreamUtils::stdOutStream() << "No connections on material..." << "\n";
-	}
-}
-
 static void vertexIterator(MObject& node, std::vector<int>& trianglesPerPolygon, std::vector<int>& index, std::vector<std::vector<float>>& position, std::vector<std::vector<float>>& normal, std::vector<std::vector<float>>& uv)
 {
 	MItMeshVertex itvertex(node, NULL);
@@ -730,23 +643,19 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 
 					if (plugs.length() > 0)
 					{
-						for (uint32_t ii = 0; ii < plugs.length(); ++ii)
+						// Diffuse 
+						MPlug baseColorPlug = standardSurface.findPlug("baseColor", &status);
+						if (!baseColorPlug.isNull())
 						{
-							MPlug plug = plugs[ii];
-
-							// Color Map
-							if (plug.partialName() == "bc")
+							if (baseColorPlug.isConnected())
 							{
-								// Find texture
-								MPlugArray connectedPlugs;
-								plug.connectedTo(connectedPlugs, true, false);
-
+								// Texture
+								baseColorPlug.connectedTo(connectedPlugs, true, false);
 								for (unsigned int j = 0; j < connectedPlugs.length(); ++j)
 								{
 									MPlug connectedPlug = connectedPlugs[j];
 									MObject connectedNode = connectedPlug.node();
 
-									// Check if the connected node is a file texture node
 									MFnDependencyNode connectedNodeFn(connectedNode);
 									if (connectedNodeFn.typeName() == "file")
 									{
@@ -755,21 +664,149 @@ void callbackTimer(float _elapsedTime, float _lastTime, void* _clientData)
 										if (!filePathPlug.isNull())
 										{
 											MString textureFilePath = filePathPlug.asString();
-											MStreamUtils::stdOutStream() << "	color map: " << textureFilePath << "\n";
-											bx::strCopy(materialEvent.m_colorPath, 1024, textureFilePath.asChar());
+											bx::strCopy(materialEvent.m_diffusePath, 1024, textureFilePath.asChar());
+
+											MStreamUtils::stdOutStream() << "	color map: " << materialEvent.m_diffusePath << "\n";
 										}
 									}
 								}
 							}
-							// Normal Map
-							else if (plug.partialName() == "n")
-							{
-								
-							}
-							// Other...
 							else
 							{
-								MStreamUtils::stdOutStream() << "	connection: " << plug.partialName() << "\n";
+								// Factor
+								baseColorPlug.child(0).getValue(materialEvent.m_diffuse[0]); // R
+								baseColorPlug.child(1).getValue(materialEvent.m_diffuse[1]); // G
+								baseColorPlug.child(2).getValue(materialEvent.m_diffuse[2]); // B
+
+								MStreamUtils::stdOutStream() << "	color: " << materialEvent.m_diffuse[0] << ", " << materialEvent.m_diffuse[1] << ", " << materialEvent.m_diffuse[2] << "\n";
+							}
+						}
+
+						// Normal 
+						MPlug normalPlug = standardSurface.findPlug("normalCamera", &status);
+						if (!normalPlug.isNull())
+						{
+							if (normalPlug.isConnected())
+							{
+								normalPlug.connectedTo(connectedPlugs, true, false);
+								for (unsigned int j = 0; j < connectedPlugs.length(); ++j)
+								{
+									MPlug connectedPlug = connectedPlugs[j];
+									MObject connectedNode = connectedPlug.node();
+
+									MFnDependencyNode connectedNodeFn(connectedNode);
+									if (connectedNodeFn.typeName() == "bump2d")
+									{
+										MPlug bumpValuePlug = connectedNodeFn.findPlug("bumpValue", true);
+										if (!bumpValuePlug.isNull() && bumpValuePlug.isConnected())
+										{
+											bumpValuePlug.connectedTo(connectedPlugs, true, false);
+											for (unsigned int k = 0; k < connectedPlugs.length(); ++k)
+											{
+												MPlug bumpConnectedPlug = connectedPlugs[k];
+												MObject bumpConnectedNode = bumpConnectedPlug.node();
+
+												MFnDependencyNode bumpConnectedNodeFn(bumpConnectedNode);
+												if (bumpConnectedNodeFn.typeName() == "file")
+												{
+													MFnDependencyNode fileNodeFn(bumpConnectedNode);
+													MPlug filePathPlug = fileNodeFn.findPlug("fileTextureName", true);
+													if (!filePathPlug.isNull())
+													{
+														MString textureFilePath = filePathPlug.asString();
+														bx::strCopy(materialEvent.m_normalPath, 1024, textureFilePath.asChar());
+
+														MStreamUtils::stdOutStream() << "	normal map: " << materialEvent.m_normalPath << "\n";
+													}
+												}
+											}
+										}
+									}
+									else if (connectedNodeFn.typeName() == "file")
+									{
+										MFnDependencyNode fileNodeFn(connectedNode);
+										MPlug filePathPlug = fileNodeFn.findPlug("fileTextureName", true);
+										if (!filePathPlug.isNull())
+										{
+											MString textureFilePath = filePathPlug.asString();
+											bx::strCopy(materialEvent.m_normalPath, 1024, textureFilePath.asChar());
+
+											MStreamUtils::stdOutStream() << "	normal map: " << materialEvent.m_normalPath << "\n";
+										}
+									}
+								}
+							}
+						}
+
+						// Roughness
+						MPlug roughnessPlug = standardSurface.findPlug("specularRoughness", &status);
+						if (!roughnessPlug.isNull())
+						{
+							if (roughnessPlug.isConnected())
+							{
+								roughnessPlug.connectedTo(connectedPlugs, true, false);
+								for (unsigned int j = 0; j < connectedPlugs.length(); ++j)
+								{
+									MPlug connectedPlug = connectedPlugs[j];
+									MObject connectedNode = connectedPlug.node();
+
+									MFnDependencyNode connectedNodeFn(connectedNode);
+									if (connectedNodeFn.typeName() == "file")
+									{
+										MFnDependencyNode fileNodeFn(connectedNode);
+										MPlug filePathPlug = fileNodeFn.findPlug("fileTextureName", true);
+										if (!filePathPlug.isNull())
+										{
+											MString textureFilePath = filePathPlug.asString();
+											bx::strCopy(materialEvent.m_roughnessPath, 1024, textureFilePath.asChar());
+
+											MStreamUtils::stdOutStream() << "	roughness map: " << materialEvent.m_roughnessPath << "\n";
+										}
+									}
+								}
+							}
+							else
+							{
+								double roughnessValue;
+								roughnessPlug.getValue(roughnessValue);
+								materialEvent.m_roughness = roughnessValue;
+								MStreamUtils::stdOutStream() << "	roughness factor: " << roughnessValue << "\n";
+							}
+						}
+
+						// Metallic
+						MPlug metallicPlug = standardSurface.findPlug("metalness", &status);
+						if (!metallicPlug.isNull())
+						{
+							if (metallicPlug.isConnected())
+							{
+								metallicPlug.connectedTo(connectedPlugs, true, false);
+								for (unsigned int j = 0; j < connectedPlugs.length(); ++j)
+								{
+									MPlug connectedPlug = connectedPlugs[j];
+									MObject connectedNode = connectedPlug.node();
+
+									MFnDependencyNode connectedNodeFn(connectedNode);
+									if (connectedNodeFn.typeName() == "file")
+									{
+										MFnDependencyNode fileNodeFn(connectedNode);
+										MPlug filePathPlug = fileNodeFn.findPlug("fileTextureName", true);
+										if (!filePathPlug.isNull())
+										{
+											MString textureFilePath = filePathPlug.asString();
+											bx::strCopy(materialEvent.m_metallicPath, 1024, textureFilePath.asChar());
+
+											MStreamUtils::stdOutStream() << "	metallic map: " << materialEvent.m_metallicPath << "\n";
+										}
+									}
+								}
+							}
+							else
+							{
+								double metallicValue;
+								metallicPlug.getValue(metallicValue);
+								materialEvent.m_metallic = metallicValue;
+								MStreamUtils::stdOutStream() << "	metallic factor: " << metallicValue << "\n";
 							}
 						}
 					}

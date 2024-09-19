@@ -3,18 +3,18 @@
 #include <memory> // @todo bx/uint32_t
 
 ///
-#define SHARED_DATA_NUM_FLOAT_PER_VERTEX 3 + 3 + 2
+#define SHARED_DATA_NUM_FLOAT_PER_VERTEX (3 + 3 + 2)
 
 #define SHARED_DATA_MB(x) ((x) * 1024 * 1024)
 
 ///
 #ifndef SHARED_DATA_CONFIG_MAX_VERTICES
-	#define SHARED_DATA_CONFIG_MAX_VERTICES SHARED_DATA_MB(4) / (sizeof(float) * SHARED_DATA_NUM_FLOAT_PER_VERTEX)
+	#define SHARED_DATA_CONFIG_MAX_VERTICES SHARED_DATA_MB(128) / (sizeof(float) * SHARED_DATA_NUM_FLOAT_PER_VERTEX)
 #endif
 
 ///
 #ifndef SHARED_DATA_CONFIG_MAX_INDICES
-	#define SHARED_DATA_CONFIG_MAX_INDICES SHARED_DATA_MB(4) / sizeof(uint32_t)
+	#define SHARED_DATA_CONFIG_MAX_INDICES SHARED_DATA_MB(128) / sizeof(uint32_t)
 #endif
 
 ///
@@ -31,11 +31,13 @@ struct SharedData
 	{
 		float m_view[16];
 		float m_proj[16];
+
 	} m_camera;
 
 	struct MeshEvent
 	{
-		char m_name[1024]; //!< Entity name (This creates the entity.)
+		// @todo Change this. Transform should create entity, then create events based on children.
+		char m_name[1024]; //!< Entity name (This creates the entity.) 
 		bool m_changed;
 
 		// Vertex layout: position, normal, uv
@@ -52,8 +54,17 @@ struct SharedData
 		char m_name[1024]; //!< Entity name (This expects entity to be created.)
 		bool m_changed;
 
-		char m_colorPath[1024];
+		float m_diffuse[3];
+		char m_diffusePath[1024];
+
+		float m_normal[3];
 		char m_normalPath[1024];
+
+		float m_roughness;
+		char m_roughnessPath[1024];
+
+		float m_metallic;
+		char m_metallicPath[1024];
 
 	} m_materialChanged;
 
